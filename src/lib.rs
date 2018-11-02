@@ -44,12 +44,18 @@ pub fn start_worker<U, A, C>(urls: U, callback_fn: C) -> Result<(), Error>
 
 	ensure!(!urls.is_empty(), "Not dialing to any URLs. The worker will never receive work");
 
+	// Set the socket to non-blocking mode for the dail operations, which
+	// allows us to start the workers before the coordinator.
+	socket.set_nonblocking(true);
 	for url in urls {
 		let url = url.as_ref();
 
 		info!("Connecting to {}", url);
 		socket.dial(url).context("Unable to connect to URL")?;
 	}
+
+	// Go back to blocking mode now that we want to receive work.
+	socket.set_nonblocking(false);
 
 	info!("Beginning work loop");
 	loop {
