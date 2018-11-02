@@ -21,7 +21,8 @@ extern crate failure;
 extern crate nng;
 
 use std::sync::mpsc;
-use std::ffi::CString;
+use nng::{Socket, Protocol};
+use nng::aio::{Aio, Context};
 use failure::{Error, ResultExt};
 
 /// Creates a worker node that executes the callback function up receiving work.
@@ -34,26 +35,20 @@ use failure::{Error, ResultExt};
 /// between all connected coordinators.
 pub fn start_worker<U, A, C>(urls: U, callback_fn: C) -> Result<(), Error>
 	where U: AsRef<[A]>, A: AsRef<str>,
-	      C: Fn(Vec<u8>) -> Result<Vec<u8>, Error>
+	      C: Fn(&[u8]) -> Result<Vec<u8>, Error>
 {
 	let urls = urls.as_ref();
 
 	info!("Opening nng socket");
-	let mut socket = nng::Socket::reply_open().context("Unable to open socket")?;
+	let mut socket = Socket::new(Protocol::Rep0).context("Unable to open socket")?;
 
-	// The error management story for this function is a little sad right now.
-	// Rather than trying to force something to work, it is easier to simply
-	// warn and ignore if the user provides no URLs.
-	if urls.is_empty() {
-		warn!("Worker did not connect to any coordinators. It will never receive work.");
-	}
+	ensure!(!urls.is_empty(), "Not dialing to any URLs. The worker will never receive work");
 
 	for url in urls {
 		let url = url.as_ref();
 
 		info!("Connecting to {}", url);
-		let c_url = CString::new(url).context("Unable to convert URL into c-string")?;
-		socket.dial(&c_url).context("Unable to connect to URL")?;
+		socket.dial(url).context("Unable to connect to URL")?;
 	}
 
 	info!("Beginning work loop");
@@ -62,10 +57,12 @@ pub fn start_worker<U, A, C>(urls: U, callback_fn: C) -> Result<(), Error>
 		let work = socket.recv().context("Failed to receive work")?;
 
 		debug!("Entering callback function");
-		let mut result = callback_fn(work)?;
+		let result = callback_fn(&work).context("Callback function resulted in an error")?;
 
 		debug!("Replying with result");
-		socket.send(&mut result).context("Failed to send results")?;
+		socket.send(result[..].into())
+			.map_err(|(_, e)| e)
+			.context("Failed to send results")?;
 	}
 }
 
@@ -79,7 +76,7 @@ pub fn start_worker<U, A, C>(urls: U, callback_fn: C) -> Result<(), Error>
 pub struct Coordinator
 {
 	/// The asynchronous IO contexts.
-	contexts: Vec<nng::AsyncIo>,
+	contexts: Vec<(Context, Aio)>,
 
 	/// The channel that the async IO contexts use to send data to the
 	/// coordinator.
@@ -90,7 +87,7 @@ pub struct Coordinator
 	/// This manages all of the contexts and connections from worker nodes. I
 	/// am fairly confident it isn't necessary to drop this last but it is
 	/// likely a good idea.
-	_socket: nng::Socket,
+	_socket: Socket,
 }
 impl Coordinator
 {
@@ -124,14 +121,13 @@ impl Coordinator
 		ensure!(expected_num_workers >= 1, "No expected workers. Coordinator cannot function");
 
 		info!("Opening socket");
-		let mut socket = nng::Socket::request_open().context("Unable to open socket")?;
+		let mut socket = Socket::new(Protocol::Req0).context("Unable to open socket")?;
 
 		for url in urls {
 			let url = url.as_ref();
 
 			info!("Listening on {}", url);
-			let c_url = CString::new(url).context("Unable to convert URL into c-string")?;
-			socket.listen(&c_url).context("Unable to listen to URL")?;
+			socket.listen(url).context("Unable to listen to URL")?;
 		}
 
 		// Create the MPSC queue that will allow the async IO thread to send
@@ -169,41 +165,23 @@ impl Coordinator
 		//Then begin the actual function.
 		let mut results = vec![None; work.len()];
 
-		// Start by trying to convert all of the work into `nng_msg`
-		debug!("Converting work into nng messages");
-		let mut work_msgs = {
-			let res: Result<Vec<nng::Message>, nng::Error> =
-				work.iter().map(|w| {
-					let w = w.as_ref();
-
-					let mut msg = nng::Message::with_capacity(w.len())?;
-					msg.insert(&w)?;
-					Ok(msg)
-				}).collect();
-
-			match res {
-				Ok(work_msgs) => work_msgs.into_iter().enumerate(),
-				Err(e) => return Err(BatchError { cause: e, results }),
-			}
-		};
-
 		// We're going to keep track of which contexts are servicing which jobs
 		// to prevent a queue of jobs waiting on specific contexts.
 		let mut mapping = vec![0; self.contexts.len()];
 		let mut outgoing = 0;
 
-		// Now that all of the work is converted to messages we can start
-		// sending them out. Since there are currently no pending messages we
-		// can just use all of the contexts to send out messages.
-		debug!("Doing preliminary work assignments");
-		for ((m, (e, w)), c) in mapping.iter_mut().zip(&mut work_msgs).zip(self.contexts.iter()) {
-			*m = e;
-			let (aio, ctx) = (c.aio(), c.context());
-			unsafe {
-				aio.set_msg(w);
-				ctx.send(aio);
-			}
+		// Create the iterator outside of loops so we can keep track of which
+		// message is next.
+		let mut work_iter = work.iter().map(|w| w.as_ref()).enumerate();
 
+		// Since there are currently no pending messages we can just use all of
+		// the contexts to send out messages.
+		debug!("Doing preliminary work assignments");
+		for ((mapping, (wid, work)), c) in mapping.iter_mut().zip(&mut work_iter).zip(self.contexts.iter()) {
+			let (ctx, aio) = c;
+
+			*mapping = wid;
+			aio.send(ctx, work.into()).expect("Aio should have no pending events");
 			outgoing += 1;
 		}
 
@@ -215,7 +193,7 @@ impl Coordinator
 		// Now that all of our contexts are full, we need to wait for them to
 		// free and queue jobs as available.
 		debug!("Finishing work assignments");
-		for (e, w) in work_msgs {
+		for (e, w) in work_iter {
 			let (id, res) = self.rx.recv().unwrap();
 			outgoing -= 1;
 
@@ -229,12 +207,8 @@ impl Coordinator
 					results[work_id] = Some(r);
 					mapping[id] = e;
 
-					let (aio, ctx) = (self.contexts[id].aio(), self.contexts[id].context());
-					unsafe {
-						aio.set_msg(w);
-						ctx.send(aio);
-					}
-
+					let (ref ctx, ref aio) = self.contexts[id];
+					aio.send(&ctx, w.into()).expect("Aio should have no pending events");
 					outgoing += 1;
 				},
 				Err(e) => {
@@ -274,30 +248,30 @@ impl Coordinator
 	}
 
 	/// Creates an asynchronous context pair
-	fn create_async_io(socket: &mut nng::Socket, id: usize, tx: mpsc::SyncSender<(usize, nng::Result<Vec<u8>>)>) -> Result<nng::AsyncIo, Error>
+	fn create_async_io(
+		socket: &mut Socket,
+		id: usize,
+		tx: mpsc::SyncSender<(usize, nng::Result<Vec<u8>>)>
+	) -> Result<(Context, Aio), Error>
 	{
 		let mut state = State::Send;
+		let ctx = Context::new(socket).context("Unable to create context")?; // Ha!
+		let ctx_clone = ctx.clone();
 
-		Ok(nng::AsyncIo::new(socket, move |aio, ctx| {
-			trace!("AsyncIO event on {} ({:?})", id, state);
-			match (&state, aio.result()) {
+		let aio = Aio::with_callback(move |aio| {
+			trace!("Aio event on {} ({:?})", id, state);
+			match (&state, aio.result().expect("Should have results in callback")) {
 				(&State::Send, Ok(_)) => {
 					// The send went fine. Wait for a reply.
-					unsafe { ctx.recv(aio); }
+					aio.recv(&ctx).expect("Shouldn't have an operation queued");
 
 					state = State::Recv;
 				},
-				(&State::Send, Err(e)) => {
-					// We failed to send the message. We need to collect it and
-					// then drop it to recover the memory.
-					let _ = unsafe { aio.get_msg() };
-					tx.send((id, Err(e))).unwrap();
-
-					// State stays the same
-				},
+				(&State::Send, Err(e)) => tx.send((id, Err(e))).unwrap(),
 				(&State::Recv, Ok(_)) => {
 					// We received a valid message. Send it to the main thread.
-					unsafe { tx.send((id, Ok(aio.get_msg().body().to_owned()))).unwrap(); }
+					let msg = aio.get_msg().expect("Successful receive shoul have a message");
+					tx.send((id, Ok(msg[..].into()))).unwrap();
 
 					// Wait to send a message
 					state = State::Send;
@@ -308,13 +282,15 @@ impl Coordinator
 					state = State::Send
 				}
 			}
-		})?)
+		}).context("Unable to create Aio object")?;
+
+		Ok((ctx_clone, aio))
 	}
 }
 
 /// An error occurred during batch submission
 #[derive(Debug, Fail)]
-#[fail(display = "Unable to prepare batch for submission")]
+#[fail(display = "Unable to complete batch")]
 pub struct BatchError
 {
 	#[cause]
