@@ -2,3 +2,7 @@
 
 Banyan makes it easy to distribute tasks across multiple processes, machines, or threads.
 It takes advantage of https://nanomsg.github.io/nng/[nng] to provide reliable connections between coordinator and worker nodes.
+
+This was pulled from a private repository where it was using a custom wrapper around _nng_.
+The conversion to the https://crates.io/crates/nng[nng-rs crate] was a bit hackish and could use some cleaning up.
+That being said, the library does work.
