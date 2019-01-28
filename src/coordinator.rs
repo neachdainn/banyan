@@ -276,7 +276,6 @@ impl WorkerContext
 		let state = Arc::new(Mutex::new(State { receiving: false, promise: None }));
 
 		let info = CallbackInfo {
-			inner: inner,
 			state: state.clone(),
 			ctx: ctx.clone(),
 			id
@@ -285,9 +284,23 @@ impl WorkerContext
 		let aio = Aio::with_callback(move |aio| {
 			// If things go wrong, the best thing that we can really do at this point is really just
 			// to try and log it and then move on. This is better than trying to panic into C code.
-			if let Err(e) = WorkerContext::callback(aio, &info) {
-				error!("Error in AIO callback");
-				e.iter_chain().for_each(|c| error!("Caused by: {}", c));
+			match WorkerContext::callback(aio, &info) {
+				Ok(true) => {
+					// We need to assign more work to this context
+					if let Some(inner_mtx) = inner.upgrade() {
+						if let Ok(mut i) = inner_mtx.lock() {
+							i.cycle_one(info.id);
+						}
+						else {
+							error!("Inner mutex has been poisoned");
+						}
+					}
+				},
+				Err(e) => {
+					error!("Error in AIO callback");
+					e.iter_chain().for_each(|c| error!("Caused by: {}", c));
+				},
+				_ => {},
 			}
 		}).context("Unable to create AIO object")?;
 
@@ -309,7 +322,9 @@ impl WorkerContext
 	}
 
 	/// Process the AIO event.
-	fn callback(aio: &Aio, info: &CallbackInfo) -> Result<(), Error>
+	///
+	/// Returns true if the worker context can be used for a different job.
+	fn callback(aio: &Aio, info: &CallbackInfo) -> Result<bool, Error>
 	{
 		trace!("WorkerContext #{} ⇒ AIO event", info.id);
 
@@ -338,7 +353,7 @@ impl WorkerContext
 				}
 				else {
 					state.receiving = true;
-					Ok(())
+					Ok(false)
 				}
 			},
 
@@ -360,21 +375,7 @@ impl WorkerContext
 				};
 
 				// Send the message to the user.
-				state.report_ok(msg[..].into())?;
-
-				// Finally, we need to queue up more work for this worker context. We also need to
-				// make absolutely sure that we unlock the state mutex otherwise we will get a
-				// deadlock. If we can't upgrade the weak pointer, it means that the coordinator is
-				// gone and there will be no more work to acquire.
-				std::mem::drop(state);
-				if let Some(inner_mtx) = info.inner.upgrade() {
-					inner_mtx.lock()
-						.map(|mut inner| inner.cycle_one(info.id))
-						.map_err(|_| format_err!("Inner mutex is poisoned"))
-				}
-				else {
-					Ok(())
-				}
+				state.report_ok(msg[..].into())
 			},
 
 			(true, Err(e)) => {
@@ -398,14 +399,14 @@ struct State
 impl State
 {
 	/// Report the given error back to the user via the promise.
-	fn report_err(&mut self, e: Error) -> Result<(), Error>
+	fn report_err(&mut self, e: Error) -> Result<bool, Error>
 	{
 		match self.promise.take() {
 			Some(p) => {
 				// After sending _anything_ to the user, the state is always sending.
 				self.receiving = false;
 				let _ = p.send(Err(e));
-				Ok(())
+				Ok(true)
 			},
 			None => {
 				Err(format_err!("There was no promise to fulfill"))
@@ -414,13 +415,13 @@ impl State
 	}
 
 	/// Send the valid message to the user via the promise.
-	fn report_ok(&mut self, m: Vec<u8>) -> Result<(), Error>
+	fn report_ok(&mut self, m: Vec<u8>) -> Result<bool, Error>
 	{
 		match self.promise.take() {
 			Some(p) => {
 				self.receiving = false;
 				let _ = p.send(Ok(m));
-				Ok(())
+				Ok(true)
 			},
 			None => {
 				Err(format_err!("There was no promise to fulfill"))
@@ -432,7 +433,6 @@ impl State
 /// Information needed for the WorkerContext callback.
 struct CallbackInfo
 {
-	inner: Weak<Mutex<Inner>>,
 	state: Arc<Mutex<State>>,
 	ctx: Context,
 	id: usize
