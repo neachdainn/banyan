@@ -3,8 +3,10 @@ name = "banyan"
 version = "0.1.0"
 authors = ["Nathan Kent <nate@nkent.net>"]
 
+edition = "2018"
+
 [dependencies]
-nng = "0.3"
+nng = "0.4"
 log = "0.4"
 failure = "0.1.3"
 
