@@ -16,8 +16,8 @@ pub fn start<'a, U, C>(urls: U, mut callback: C) -> Result<(), Error>
 	where U: IntoIterator<Item = &'a str>,
 	      C: FnMut(&[u8]) -> Result<Vec<u8>, Error>
 {
-	info!("Opening NNG socket");
-	let mut socket = Socket::new(Protocol::Rep0).context("Unable to open socket")?;
+	info!("Opening NNG REPLY socket");
+	let mut socket = Socket::new(Protocol::Rep0).context("Unable to open REP socket")?;
 
 	// Setting the socket to non-blocking mode for the dial operations will allow us to start the
 	// workers before the coordinator.
