@@ -29,8 +29,9 @@ impl Coordinator
 	///
 	/// The node will listen on the specified URLs for connections from worker nodes and will then
 	/// distribute work fairly among them.
-	pub fn new<'a, U>(urls: U) -> Result<Self, Error>
-		where U: IntoIterator<Item = &'a str>
+	pub fn new<U, S>(urls: U) -> Result<Self, Error>
+		where U: IntoIterator<Item = S>,
+		      S: AsRef<str>
 	{
 		info!("Opening NNG REQUEST socket");
 		let socket = Socket::new(Protocol::Req0).context("Unable to open REQ socket")?;
@@ -49,8 +50,11 @@ impl Coordinator
 
 			// Now that we're counting our connections, we can start accepting them.
 			urls.into_iter()
-				.inspect(|url| info!("Listening on {}", url))
-				.map(|url| socket.listen(url).context("Unable to listen to URL"))
+				.map(|url| {
+					let url = url.as_ref();
+					info!("Dialing to {}", url);
+					socket.listen(url).context("Unable to listend to URL")
+				})
 				.collect::<Result<_, _>>()?;
 		}
 
@@ -324,6 +328,7 @@ impl WorkerContext
 		};
 
 		// We can now enter the state machine.
+		trace!("Worker #{} ⇒ ({}, {:?})", info.id, state.receiving, res);
 		match (state.receiving, res) {
 			(false, Ok(_)) => {
 				// The message was successfully sent. Wait for the response.

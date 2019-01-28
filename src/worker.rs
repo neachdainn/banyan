@@ -12,8 +12,9 @@ use log::{info, debug};
 ///
 /// This function is largely just a wrapper around an NNG "Reply" socket, which means that the
 /// requester does not necessarily have to be a Coordinator node.
-pub fn start<'a, U, C>(urls: U, mut callback: C) -> Result<(), Error>
-	where U: IntoIterator<Item = &'a str>,
+pub fn start<U, S, C>(urls: U, mut callback: C) -> Result<(), Error>
+	where U: IntoIterator<Item = S>,
+	      S: AsRef<str>,
 	      C: FnMut(&[u8]) -> Result<Vec<u8>, Error>
 {
 	info!("Opening NNG REPLY socket");
@@ -23,8 +24,11 @@ pub fn start<'a, U, C>(urls: U, mut callback: C) -> Result<(), Error>
 	// workers before the coordinator.
 	socket.set_nonblocking(true);
 	urls.into_iter()
-		.inspect(|url| info!("Dialing to {}", url))
-		.map(|url| socket.dial(url).context("Unable to dial to URL"))
+		.map(|url| {
+			let url = url.as_ref();
+			info!("Dialing to {}", url);
+			socket.dial(url).context("Unable to dial to URL")
+		})
 		.collect::<Result<_, _>>()?;
 
 	// Now that we've dialed out, go back to blocking mode to make managing the work easier.
