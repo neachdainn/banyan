@@ -32,7 +32,7 @@ fn run() -> Result<(), failure::Error>
 	];
 
 	info!("Creating coordinator");
-	let c = Coordinator::new(vec!["tcp://127.0.0.1:5555"])?;
+	let c = Coordinator::new(&["tcp://127.0.0.1:5555"])?;
 
 	info!("Starting first batch");
 	let res0 = data0.into_iter()
