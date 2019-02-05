@@ -1,9 +1,7 @@
-extern crate banyan;
-extern crate failure;
-extern crate env_logger;
+use banyan::coordinator::Coordinator;
 
-#[macro_use]
-extern crate log;
+use log::{error, info};
+use futures::Future;
 
 fn run() -> Result<(), failure::Error>
 {
@@ -34,24 +32,26 @@ fn run() -> Result<(), failure::Error>
 	];
 
 	info!("Creating coordinator");
-	let mut c = banyan::Coordinator::new(&["tcp://127.0.0.1:5555"], 4)?;
+	let c = Coordinator::new(&["tcp://127.0.0.1:5555"])?;
 
 	info!("Starting first batch");
-	let res0 = c.submit_batch(data0)?;
+	let res0 = data0.into_iter()
+		.map(|s| c.submit(s))
+		.collect::<Vec<_>>();
 
-	info!("Batch complete");
-	for (i, r) in res0.into_iter().enumerate() {
-		let s = String::from_utf8(r).unwrap();
-		info!("{}: {}", i, s);
+	info!("Batch submitted");
+	for future in res0 {
+		info!("{}", String::from_utf8(future.wait()?)?);
 	}
 
 	info!("Starting second batch");
-	let res1 = c.submit_batch(data1)?;
+	let res1 = data1.into_iter()
+		.map(|s| c.submit(s))
+		.collect::<Vec<_>>();
 
-	info!("Batch complete");
-	for (i, r) in res1.into_iter().enumerate() {
-		let s = String::from_utf8(r).unwrap();
-		info!("{}: {}", i, s);
+	info!("Batch submitted");
+	for future in res1 {
+		info!("{}", String::from_utf8(future.wait()?)?);
 	}
 
 	Ok(())
