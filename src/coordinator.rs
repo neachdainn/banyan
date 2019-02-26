@@ -77,6 +77,16 @@ impl Backend
 		self.tx.clone()
 	}
 
+	/// Creates a new handle to the underlying socket.
+	///
+	/// This handle is *not* meant to be used to send and receive messages. However, it does use its
+	/// own context and no one else has access to the backend AIO objects, so it shouldn't cause
+	/// issues if someone does.
+	fn socket(&self) -> nng::Socket
+	{
+		self.socket.clone()
+	}
+
 	/// Run the backend event loop.
 	fn run(mut self) -> Result<(), Error>
 	{
@@ -285,6 +295,11 @@ pub struct Coordinator
 	/// Channel for communication with the backend.
 	tx: mpsc::SyncSender<Command>,
 
+	/// An additional handle to the backend's socket.
+	///
+	/// This is useful for being able to manage URLs even after the backend has been started.
+	socket: nng::Socket,
+
 	/// Thread handle for the backend.
 	jh: Option<thread::JoinHandle<Result<(), Error>>>,
 }
@@ -298,11 +313,19 @@ impl Coordinator
 	{
 		let backend = Backend::new(urls).context("Unable to start backend start failed")?;
 		let tx = backend.tx();
+		let socket = backend.socket();
 
 		debug!("Starting backend thread");
 		let jh = Some(thread::spawn(move || backend.run()));
 
-		Ok(Coordinator {  tx, jh })
+		Ok(Coordinator {  tx, socket, jh })
+	}
+
+	/// Begins listening on a new URL.
+	pub fn listen(&mut self, url: &str) -> Result<(), Error>
+	{
+		self.socket.listen(url).context("Unable to listen to URL")?;
+		Ok(())
 	}
 
 	/// Queue a message on the worker nodes.
@@ -329,6 +352,10 @@ impl Coordinator
 	}
 
 	/// Shut down the coordinator, blocking until all current futures have a result.
+	///
+	/// It is not necessary to call this function to be certain that all pending futures will
+	/// complete. Even if the Coordinator is dropped without explicitely shutting down, all futures
+	/// will be fulfilled.
 	pub fn shutdown(mut self) -> Result<(), Error>
 	{
 		// If we can't send the shutdown command, it's because the backend has already died.
