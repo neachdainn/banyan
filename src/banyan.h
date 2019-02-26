@@ -91,12 +91,12 @@ void banyan_buffer_free(banyan_buffer *buff);
 //
 // This totally replaces the data in the buffer. If the length is zero or if the input data is a
 // `NULL` pointer, then the buffer is simply cleared.
-void banyan_buffer_copy(banyan_buffer *buff, void *data, size_t len);
+void banyan_buffer_copy(banyan_buffer *buff, const void *data, size_t len);
 
 // Returns the pointer to the buffered data as well as the length of the buffered data.
 //
 // This returns `NULL` upon error. Check the Banyan logger for more details.
-void * banyan_buffer_data(banyan_buffer *buff, size_t *len);
+const void * banyan_buffer_data(const banyan_buffer *buff, size_t *len);
 
 #ifdef __cplusplus
 }

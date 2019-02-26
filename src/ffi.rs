@@ -300,7 +300,7 @@ extern "C" fn banyan_buffer_free(buffer: *mut banyan_buffer)
 
 /// Copies the pointed-to data into the buffer, clearing it if the pointer is `null`.
 #[no_mangle]
-extern "C" fn banyan_buffer_copy(buffer: *mut banyan_buffer, data: *mut c_void, len: usize)
+extern "C" fn banyan_buffer_copy(buffer: *mut banyan_buffer, data: *const c_void, len: usize)
 {
 	if buffer.is_null() {
 		warn!("Received null buffer in `banyan_buffer_copy`");
@@ -322,7 +322,7 @@ extern "C" fn banyan_buffer_copy(buffer: *mut banyan_buffer, data: *mut c_void, 
 
 /// Returns a pointer to the data owned by the buffer.
 #[no_mangle]
-extern "C" fn banyan_buffer_data(buffer: *mut banyan_buffer, len: *mut usize) -> *const c_void
+extern "C" fn banyan_buffer_data(buffer: *const banyan_buffer, len: *mut usize) -> *const c_void
 {
 	if buffer.is_null() {
 		warn!("Received null buffer in `banyan_buffer_data`");
