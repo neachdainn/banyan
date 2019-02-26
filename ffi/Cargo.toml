@@ -1,0 +1,18 @@
+[package]
+name = "banyan-ffi"
+version = "0.1.0"
+authors = ["Nathan Kent <nkent2@cs.rochester.edu>"]
+edition = "2018"
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+default = ["env_logger"]
+
+[dependencies]
+banyan = { path = ".." }
+env_logger = { version = "0.5", optional = true }
+log = "0.4"
+failure = "0.1.3"
+futures = "0.1.25"

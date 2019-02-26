@@ -1,11 +1,11 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include "../src/banyan.h"
+#include "banyan.h"
 
 int main(int argc, char** argv)
 {
-	banyan_start_logger();
+	banyan_logger_start();
 
 	std::vector<std::string> data = {
 		"The waves were crashing on the shore; it was a lovely sight.",

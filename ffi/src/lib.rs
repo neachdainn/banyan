@@ -4,7 +4,7 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 
-use crate::coordinator::Coordinator;
+use banyan::coordinator::Coordinator;
 use failure::{Error, format_err};
 use futures::Future;
 use log::{error, warn};
@@ -45,7 +45,7 @@ struct banyan_future(Box<dyn Future<Item=Vec<u8>, Error=Error>>);
 
 /// Starts the Rust environment logger.
 #[no_mangle]
-extern "C" fn banyan_start_logger()
+extern "C" fn banyan_logger_start()
 {
 	if let Err(e) = env_logger::try_init() {
 		warn!("Attempted to start logger multiple times: {}", e);
@@ -230,7 +230,7 @@ extern "C" fn banyan_worker_start(worker: *mut banyan_worker, ret_code: *mut c_i
 	};
 
 	unsafe {
-		match crate::worker::start((*worker).urls.iter(), cb) {
+		match banyan::worker::start((*worker).urls.iter(), cb) {
 			Ok(_) => 0,
 			Err(e) => {
 				error!("Worker failed: {}", e);

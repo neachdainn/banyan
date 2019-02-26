@@ -13,6 +13,3 @@
 
 pub mod worker;
 pub mod coordinator;
-
-#[cfg(feature = "ffi")]
-mod ffi;

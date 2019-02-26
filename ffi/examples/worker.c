@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include "../src/banyan.h"
+#include "banyan.h"
 
 int callback(void *user_data, const banyan_buffer *input, banyan_buffer *output)
 {
@@ -43,7 +43,7 @@ int main(int argc, char** argv)
 		return EXIT_FAILURE;
 	}
 
-	banyan_start_logger();
+	banyan_logger_start();
 
 	banyan_worker *worker = banyan_worker_alloc(&callback, argv[1]);
 	if(!worker) {

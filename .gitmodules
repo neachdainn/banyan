@@ -1,0 +1,3 @@
+[submodule "CMakeRust"]
+	path = CMakeRust
+	url = https://github.com/Devolutions/CMakeRust.git

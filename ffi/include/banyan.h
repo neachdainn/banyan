@@ -25,7 +25,7 @@ typedef struct banyan_worker banyan_worker;
 typedef struct banyan_future banyan_future;
 
 // Starts the Banyan environment logger.
-void banyan_start_logger(void);
+void banyan_logger_start(void);
 
 // Creates a new coordinator object.
 //
