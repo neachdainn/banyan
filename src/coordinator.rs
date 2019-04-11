@@ -3,10 +3,10 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::thread;
 
-use failure::{Error, Fail, format_err, ResultExt};
+use failure::{bail, Error, Fail, format_err, ResultExt};
 use futures::Future;
 use futures::sync::oneshot;
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 type Promise = oneshot::Sender<Result<Vec<u8>, Error>>;
 
@@ -91,10 +91,23 @@ impl Backend
 	fn run(mut self) -> Result<(), Error>
 	{
 		let mut accept_more = true;
+		let mut running_work = 0;
 
 		loop {
-			let cmd = self.rx.recv().unwrap_or(Command::Shutdown);
+			// If the channel is closed, we will never receive any state updates from anything. As
+			// such, we should just break out of the loop and die.
+			let cmd = match self.rx.recv() {
+				Ok(c) => c,
+				Err(_) => bail!("Communication channel shut down early"),
+			};
 
+			// If we have no running work, nothing in the queue, and we can't accept more work, just
+			// break out of the loop and die.
+			if !accept_more && running_work + self.queue.len() == 0 {
+				break Ok(());
+			}
+
+			// Otherwise, process the command.
 			match cmd {
 				Command::Shutdown => accept_more = false,
 				Command::CtxCountInc => self.max_workers = self.max_workers.saturating_add(1),
@@ -114,6 +127,14 @@ impl Backend
 						continue;
 					}
 
+					running_work = match running_work.checked_sub(1) {
+						Some(v) => v,
+						None => {
+							warn!("Received unexpected but valid results from worker ID ({})", id);
+							0
+						}
+					};
+
 					let promise = match self.workers[id].promise.take() {
 						Some(p) => p,
 						None => {
@@ -128,12 +149,14 @@ impl Backend
 
 			// Every single command either makes a single worker available or adds a single bit of
 			// work. As such, we only need to try and assign work once for every iteration.
-			self.try_assign_work();
+			if self.try_assign_work() {
+				running_work += 1;
+			}
 		}
 	}
 
-	/// Attempts to assign a work to a worker.
-	fn try_assign_work(&mut self)
+	/// Attempts to assign a work to a worker, returning `true` if an assigment happened.
+	fn try_assign_work(&mut self) -> bool
 	{
 		// If a promise has already been canceled, there is no reason to assign it to a worker. As
 		// such, we can clear out promises until we find one that isn't canceled. If there is no
@@ -143,7 +166,7 @@ impl Backend
 			Some(n) => { self.queue.drain(0..n); },
 			None => {
 				self.queue.clear();
-				return
+				return false;
 			}
 		}
 
@@ -155,11 +178,12 @@ impl Backend
 			// promise.
 			if let Err((_, e)) = worker.ctx.send(&worker.aio, work[..].into()) {
 				let _ = promise.send(Err(e.into()));
-			}
-			else {
+				false
+			} else {
 				worker.promise = Some(promise);
+				true
 			}
-		}
+		} else { false }
 	}
 
 	/// Returns the ID of the next available worker.
@@ -316,7 +340,15 @@ impl Coordinator
 		let socket = backend.socket();
 
 		debug!("Starting backend thread");
-		let jh = Some(thread::spawn(move || backend.run()));
+		let jh = Some(thread::spawn(move || {
+			let res = backend.run();
+			if let Err(e) = &res {
+				error!("Error in Banyan backend: {}", e);
+				e.iter_causes().for_each(|c| error!("Caused by: {}", c));
+			}
+
+			res
+		}));
 
 		Ok(Coordinator {  tx, socket, jh })
 	}
