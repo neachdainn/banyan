@@ -56,7 +56,7 @@ extern "C" fn banyan_start_logger()
 #[no_mangle]
 extern "C" fn banyan_coordinator_alloc() -> *mut banyan_coordinator
 {
-	let coordinator = match Coordinator::new(&[]) {
+	let coordinator = match Coordinator::new::<String>(&[]) {
 		Ok(c) => c,
 		Err(e) => {
 			error!("Failed to create Coordinator object in `banyan_coordinator_alloc`: {}", e); 

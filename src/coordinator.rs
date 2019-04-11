@@ -36,7 +36,8 @@ struct Backend
 impl Backend
 {
 	/// Create a new backend.
-	fn new(urls: &[&str]) -> Result<Backend, Error>
+	fn new<S>(urls: &[S]) -> Result<Backend, Error>
+		where S: AsRef<str>
 	{
 		info!("Opening NNG REQUEST socket");
 		let mut socket = nng::Socket::new(nng::Protocol::Req0)
@@ -57,6 +58,7 @@ impl Backend
 
 		// At this point, we start listening to and accepting connections.
 		urls.iter()
+			.map(|u| u.as_ref())
 			.inspect(|url| info!("Listening to {}", url))
 			.map(|url| socket.listen(url).context("Unable to listen to URL"))
 			.collect::<Result<_, _>>()?;
@@ -333,7 +335,8 @@ impl Coordinator
 	///
 	/// The node will listen on the specified URLs for connections from worker nodes and will then
 	/// distribute work fairly among them.
-	pub fn new(urls: &[&str]) -> Result<Self, Error>
+	pub fn new<S>(urls: &[S]) -> Result<Self, Error>
+		where S: AsRef<str>
 	{
 		let backend = Backend::new(urls).context("Unable to start backend start failed")?;
 		let tx = backend.tx();
