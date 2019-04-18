@@ -369,7 +369,7 @@ impl Coordinator
 	/// is complete and retrieve the result.
 	pub fn submit(&self, work: Vec<u8>) -> impl Future<Item=Vec<u8>, Error=Error>
 	{
-		debug!("Creating new oneshot pair and queuing work");
+		trace!("Creating new oneshot pair and queuing work");
 		let (sender, receiver) = oneshot::channel();
 
 		let res = self.tx.send(Command::Queue(work, sender));
