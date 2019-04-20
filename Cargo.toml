@@ -13,6 +13,7 @@ default= ["ffi"]
 ffi = ["env_logger"]
 
 [dependencies]
+nng-sys = "0.1.3"
 nng = "0.4"
 log = "0.4"
 failure = "0.1.3"

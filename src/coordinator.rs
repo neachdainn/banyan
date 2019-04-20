@@ -367,7 +367,7 @@ impl Coordinator
 	///
 	/// This function returns a future which can be polled or waited on to determine when the work
 	/// is complete and retrieve the result.
-	pub fn submit(&self, work: Vec<u8>) -> impl Future<Item=Vec<u8>, Error=Error>
+	pub fn submit(&self, work: Vec<u8>) -> Response
 	{
 		trace!("Creating new oneshot pair and queuing work");
 		let (sender, receiver) = oneshot::channel();
@@ -379,11 +379,7 @@ impl Coordinator
 			let _ = s.send(Err(format_err!("Backend has been shut down")));
 		}
 
-		receiver.then(|f| match f {
-			Ok(Ok(r)) => Ok(r),
-			Ok(Err(e)) => Err(e.into()),
-			Err(_) => Err(nng::Error::from(nng::ErrorKind::Canceled).into()),
-		})
+		Response { inner: receiver }
 	}
 
 	/// Shut down the coordinator, blocking until all current futures have a result.
@@ -410,6 +406,30 @@ impl Drop for Coordinator
 		// Let things play out how they will. I am fairly certain all pending futures will still be
 		// completed.
 		let _ = self.tx.send(Command::Shutdown);
+	}
+}
+
+/// The promise of a response from a Banyan worker node.
+pub struct Response
+{
+	inner: oneshot::Receiver<Result<Vec<u8>, Error>>,
+}
+
+impl Future for Response
+{
+	type Item = Vec<u8>;
+	type Error = Error;
+
+	fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error>
+	{
+		use futures::Async;
+
+		match self.inner.poll() {
+			Ok(Async::Ready(Ok(r))) => Ok(Async::Ready(r)),
+			Ok(Async::Ready(Err(e))) => Err(e.into()),
+			Ok(Async::NotReady) => Ok(Async::NotReady),
+			Err(_) => Err(nng::Error::from(nng::ErrorKind::Canceled).into())
+		}
 	}
 }
 

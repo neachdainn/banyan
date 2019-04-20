@@ -41,7 +41,8 @@ fn run() -> Result<(), failure::Error>
 
 	info!("Batch submitted");
 	for future in res0 {
-		info!("{}", String::from_utf8(future.wait()?)?);
+		let resp = String::from_utf8(future.wait()?)?;
+		info!("{}", resp);
 	}
 
 	info!("Starting second batch");
@@ -51,7 +52,8 @@ fn run() -> Result<(), failure::Error>
 
 	info!("Batch submitted");
 	for future in res1 {
-		info!("{}", String::from_utf8(future.wait()?)?);
+		let resp = String::from_utf8(future.wait()?)?;
+		info!("{}", resp);
 	}
 
 	Ok(())
