@@ -9,12 +9,12 @@ edition = "2018"
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [features]
-default= ["ffi"]
+default= ["build-nng"]
+build-nng = ["nng/build-nng"]
 ffi = ["env_logger"]
 
 [dependencies]
-nng-sys = "0.1.3"
-nng = "0.4"
+nng = { version = "0.4", default-features = false }
 log = "0.4"
 failure = "0.1.3"
 futures = "0.1.25"
