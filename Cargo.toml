@@ -9,7 +9,7 @@ edition = "2018"
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [features]
-default= ["build-nng"]
+default = ["build-nng"]
 build-nng = ["nng/build-nng"]
 ffi = ["env_logger"]
 
@@ -22,3 +22,6 @@ env_logger = { version = "0.5", optional = true}
 
 [dev-dependencies]
 env_logger = "0.5"
+
+[patch.crates-io]
+"nng-sys" = { git = "https://gitlab.com/neachdainn/nng-rs.git", branch = "banyan-fix" }

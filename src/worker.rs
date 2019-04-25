@@ -1,6 +1,12 @@
 //! Worker nodes and utilities.
+use std::time::Duration;
+
 use failure::{Error, ResultExt};
-use nng::{Socket, Protocol};
+use nng::{
+	Protocol,
+	Socket,
+	options::{Options, ReconnectMaxTime, ReconnectMinTime, transport::tcp::KeepAlive}
+};
 use log::{info, debug};
 
 /// Creates a worker node that executes the callback function upon receiving work.
@@ -19,6 +25,16 @@ pub fn start<U, S, C>(urls: U, mut callback: C) -> Result<(), Error>
 {
 	info!("Opening NNG REPLY socket");
 	let mut socket = Socket::new(Protocol::Rep0).context("Unable to open REP socket")?;
+
+	// The worker is liable to be sitting for a while as coordinators come and go. As such, we
+	// probably want to enable the TCP keepalive setting to make it easier to detect when a
+	// coordinator goes down.
+	socket.set_opt::<KeepAlive>(true).context("Unable to set TCP keepalive")?;
+
+	// We also want the workers to be fairly responsive to a coordinator coming back online.
+	socket.set_opt::<ReconnectMinTime>(None).context("Failed to set reconnect min time")?;
+	socket.set_opt::<ReconnectMaxTime>(Some(Duration::from_secs(30)))
+		.context("Failed to set reconnect max time")?;
 
 	// Setting the socket to non-blocking mode for the dial operations will allow us to start the
 	// workers before the coordinator.
