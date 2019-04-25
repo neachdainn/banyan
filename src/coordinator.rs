@@ -10,6 +10,12 @@ use log::{debug, error, info, trace, warn};
 
 type Promise = oneshot::Sender<Result<Vec<u8>, Error>>;
 
+/// The number of workers to spawn per connection.
+const WORKERS_PER_CONNECTION: usize = 2;
+
+/// The size of the queue used for messages to the backend.
+const BACKEND_QUEUE_SIZE: usize = 100;
+
 /// The backend for a single coordinator.
 struct Backend
 {
@@ -47,7 +53,7 @@ impl Backend
 		// need to pick a value that is reasonable. In other words, how fast do we think that the
 		// backend can handle incoming commands versus how quickly will they come. I suspect that
 		// the ratio is in favor of the backend, so we'll start small.
-		let (tx, rx) = mpsc::sync_channel(100);
+		let (tx, rx) = mpsc::sync_channel(BACKEND_QUEUE_SIZE);
 
 		// Now we need to set up the pipe notify functions that will inform us about the number of
 		// active connections. We do this before listening to any URLs in order to make sure that we
@@ -112,8 +118,8 @@ impl Backend
 			// Otherwise, process the command.
 			match cmd {
 				Command::Shutdown => accept_more = false,
-				Command::CtxCountInc => self.max_workers = self.max_workers.saturating_add(1),
-				Command::CtxCountDec => self.max_workers = self.max_workers.saturating_sub(1),
+				Command::CtxCountInc => self.max_workers = self.max_workers.saturating_add(WORKERS_PER_CONNECTION),
+				Command::CtxCountDec => self.max_workers = self.max_workers.saturating_sub(WORKERS_PER_CONNECTION),
 
 				Command::Queue(work, promise) => {
 					// We always want to pull the most recent bit of work, so we'll just put the
