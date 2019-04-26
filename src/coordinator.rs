@@ -8,7 +8,7 @@ use futures::Future;
 use futures::sync::oneshot;
 use log::{debug, error, info, trace, warn};
 
-type Promise = oneshot::Sender<Result<Vec<u8>, Error>>;
+type Promise = oneshot::Sender<Result<nng::Message, Error>>;
 
 /// The number of workers to spawn per connection.
 const WORKERS_PER_CONNECTION: usize = 2;
@@ -28,7 +28,7 @@ struct Backend
 	tx: mpsc::SyncSender<Command>,
 
 	/// The work that has not yet been assigned to a worker.
-	queue: VecDeque<(Vec<u8>, Promise)>,
+	queue: VecDeque<(nng::Message, Promise)>,
 
 	/// The workers whose ID is their index in the list.
 	workers: Vec<Worker>,
@@ -104,15 +104,12 @@ impl Backend
 		loop {
 			// If the channel is closed, we will never receive any state updates from anything. As
 			// such, we should just break out of the loop and die.
-			let cmd = match self.rx.recv() {
-				Ok(c) => c,
-				Err(_) => bail!("Communication channel shut down early"),
-			};
+			let cmd = self.rx.recv().context("Communication channel shut down early")?;
 
 			// If we have no running work, nothing in the queue, and we can't accept more work, just
 			// break out of the loop and die.
 			if !accept_more && running_work + self.queue.len() == 0 {
-				break Ok(());
+				return Ok(());
 			}
 
 			// Otherwise, process the command.
@@ -184,7 +181,7 @@ impl Backend
 
 			// Try to send the work. If something goes wrong, forward it to the consumer via the
 			// promise.
-			if let Err((_, e)) = worker.ctx.send(&worker.aio, work[..].into()) {
+			if let Err((_, e)) = worker.ctx.send(&worker.aio, work) {
 				let _ = promise.send(Err(e.into()));
 				false
 			} else {
@@ -272,9 +269,7 @@ impl Backend
 
 				// The receive operation went find.
 				(&State::Recv, Ok(_)) => {
-					let msg = aio.get_msg()
-						.map(|m| m[..].into())
-						.ok_or(format_err!("AIO had no message available"));
+					let msg = aio.get_msg().ok_or(format_err!("AIO had no message available"));
 					let _ = tx.send(Command::Complete(id, msg));
 
 					state = State::Send;
@@ -373,8 +368,11 @@ impl Coordinator
 	///
 	/// This function returns a future which can be polled or waited on to determine when the work
 	/// is complete and retrieve the result.
-	pub fn submit(&self, work: Vec<u8>) -> Response
+	pub fn submit<W>(&self, work: W) -> Response
+		where W: Into<nng::Message>
 	{
+		let work = work.into();
+
 		trace!("Creating new oneshot pair and queuing work");
 		let (sender, receiver) = oneshot::channel();
 
@@ -418,7 +416,7 @@ impl Drop for Coordinator
 /// The promise of a response from a Banyan worker node.
 pub struct Response
 {
-	inner: oneshot::Receiver<Result<Vec<u8>, Error>>,
+	inner: oneshot::Receiver<Result<nng::Message, Error>>,
 }
 
 impl Future for Response
@@ -431,7 +429,7 @@ impl Future for Response
 		use futures::Async;
 
 		match self.inner.poll() {
-			Ok(Async::Ready(Ok(r))) => Ok(Async::Ready(r)),
+			Ok(Async::Ready(Ok(r))) => Ok(Async::Ready(r.to_vec())),
 			Ok(Async::Ready(Err(e))) => Err(e.into()),
 			Ok(Async::NotReady) => Ok(Async::NotReady),
 			Err(_) => Err(nng::Error::from(nng::ErrorKind::Canceled).into())
@@ -476,8 +474,8 @@ enum Command
 	CtxCountDec,
 
 	/// Queue up a bit of work to do.
-	Queue(Vec<u8>, Promise),
+	Queue(nng::Message, Promise),
 
 	/// Mark a bit of work as done and the context as free.
-	Complete(usize, Result<Vec<u8>, Error>),
+	Complete(usize, Result<nng::Message, Error>),
 }
