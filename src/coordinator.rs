@@ -7,6 +7,7 @@ use failure::{bail, Error, Fail, format_err, ResultExt};
 use futures::Future;
 use futures::sync::oneshot;
 use log::{debug, error, info, trace, warn};
+use nng::options::{Options, SendBufferSize};
 
 type Promise = oneshot::Sender<Result<nng::Message, Error>>;
 
@@ -48,6 +49,10 @@ impl Backend
 		info!("Opening NNG REQUEST socket");
 		let mut socket = nng::Socket::new(nng::Protocol::Req0)
 			.context("Unable to open REQ socket")?;
+
+		// Keep NNG from forming its own queue. We are managing that in a way that makes sense to
+		// us.
+		socket.set_opt::<SendBufferSize>(1).context("Unable to set send buffer size")?;
 
 		// Open up the channel used to receive commands. Since we have to use the sync channel, we
 		// need to pick a value that is reasonable. In other words, how fast do we think that the
