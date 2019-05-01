@@ -52,7 +52,7 @@ impl Backend
 
 		// Keep NNG from forming its own queue. We are managing that in a way that makes sense to
 		// us.
-		socket.set_opt::<SendBufferSize>(1).context("Unable to set send buffer size")?;
+		socket.set_opt::<SendBufferSize>(0).context("Unable to set send buffer size")?;
 
 		// Open up the channel used to receive commands. Since we have to use the sync channel, we
 		// need to pick a value that is reasonable. In other words, how fast do we think that the
