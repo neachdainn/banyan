@@ -32,7 +32,7 @@ pub fn start<U, S, C>(urls: U, mut callback: C) -> Result<(), Error>
 	socket.set_opt::<KeepAlive>(true).context("Unable to set TCP keepalive")?;
 
 	// We also want the workers to be fairly responsive to a coordinator coming back online.
-	socket.set_opt::<ReconnectMinTime>(Some(Duration::from_secs(0)))
+	socket.set_opt::<ReconnectMinTime>(Some(Duration::from_millis(1)))
 		.context("Failed to set reconnect min time")?;
 	socket.set_opt::<ReconnectMaxTime>(Some(Duration::from_secs(30)))
 		.context("Failed to set reconnect max time")?;
