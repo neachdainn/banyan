@@ -58,7 +58,7 @@ impl Backend
 		// Experiments suggest that having this too low can bog down the whole system. It can be
 		// much larger, especially if we have confidence in our connections.
 		// FIXME: This should be exposed to the users.
-		socket.set_opt::<ResendTime>(Some(Duration::from_secs(3)))
+		socket.set_opt::<ResendTime>(Some(Duration::from_secs(180)))
 			.context("Unable to set resend time")?;
 
 		// Open up the channel used to receive commands. Since we have to use the sync channel, we
