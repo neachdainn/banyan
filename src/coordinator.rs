@@ -2,12 +2,13 @@
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use failure::{bail, Error, Fail, format_err, ResultExt};
 use futures::Future;
 use futures::sync::oneshot;
 use log::{debug, error, info, trace, warn};
-use nng::options::{Options, SendBufferSize};
+use nng::options::{Options, protocol::reqrep::ResendTime, SendBufferSize};
 
 type Promise = oneshot::Sender<Result<nng::Message, Error>>;
 
@@ -53,6 +54,12 @@ impl Backend
 		// Keep NNG from forming its own queue. We are managing that in a way that makes sense to
 		// us.
 		socket.set_opt::<SendBufferSize>(0).context("Unable to set send buffer size")?;
+
+		// Experiments suggest that having this too low can bog down the whole system. It can be
+		// much larger, especially if we have confidence in our connections.
+		// FIXME: This should be exposed to the users.
+		socket.set_opt::<ResendTime>(Some(Duration::from_secs(3)))
+			.context("Unable to set resend time")?;
 
 		// Open up the channel used to receive commands. Since we have to use the sync channel, we
 		// need to pick a value that is reasonable. In other words, how fast do we think that the
