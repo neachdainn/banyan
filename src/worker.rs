@@ -1,67 +1,150 @@
 //! Worker nodes and utilities.
-use std::time::Duration;
+use std::{error, fmt, time::Duration};
 
-use failure::{Error, ResultExt};
+use crate::error::{Error, ResultExt};
+use log::{debug, info};
 use nng::{
+	Message,
+	options::{
+		Options,
+		RecvBufferSize,
+		ReconnectMaxTime,
+		ReconnectMinTime,
+		transport::tcp::KeepAlive,
+	},
 	Protocol,
-	Socket,
-	options::{Options, ReconnectMaxTime, ReconnectMinTime, transport::tcp::KeepAlive}
+	Socket
 };
-use log::{info, debug};
 
-/// Creates a worker node that executes the callback function upon receiving work.
-///
-/// This function requires a callback that will be run every time the worker node receives work. The
-/// raw message is passed to the callback function and the returned data is sent directly back to
-/// the requester. If multiple URLS are specified, the worker will split its work fairly between all
-/// connected requesters.
-///
-/// This function is largely just a wrapper around an NNG "Reply" socket, which means that the
-/// requester does not necessarily have to be a Coordinator node.
-pub fn start<U, S, C>(urls: U, mut callback: C) -> Result<(), Error>
-	where U: IntoIterator<Item = S>,
-	      S: AsRef<str>,
-	      C: FnMut(&[u8]) -> Result<Vec<u8>, Error>
+/// A worker node that can execute a callback upon receiving work.
+#[derive(Debug)]
+pub struct Worker
 {
-	info!("Opening NNG REPLY socket");
-	let mut socket = Socket::new(Protocol::Rep0).context("Unable to open REP socket")?;
+	/// The socket that will provide the worker with work.
+	socket: Socket,
+}
 
-	// The worker is liable to be sitting for a while as coordinators come and go. As such, we
-	// probably want to enable the TCP keepalive setting to make it easier to detect when a
-	// coordinator goes down.
-	socket.set_opt::<KeepAlive>(true).context("Unable to set TCP keepalive")?;
+impl Worker
+{
+	/// Creates a new worker node.
+	///
+	/// The node will attempt to connect to and listen for work from the specified addresses.
+	pub fn new<I, S>(urls: I) -> Result<Self, Error>
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
+		info!("Opening NNG REP0 socket");
+		let mut socket = Socket::new(Protocol::Rep0).context("Unable to open REP0 socket")?;
 
-	// We also want the workers to be fairly responsive to a coordinator coming back online.
-	socket.set_opt::<ReconnectMinTime>(Some(Duration::from_secs(0)))
-		.context("Failed to set reconnect min time")?;
-	socket.set_opt::<ReconnectMaxTime>(Some(Duration::from_secs(30)))
-		.context("Failed to set reconnect max time")?;
+		// Utilize the TCP keepalive to try to help keep things sane when there are long gaps
+		// between work events.
+		socket.set_opt::<KeepAlive>(true).context("Unable to set TCP keepalive")?;
 
-	// Setting the socket to non-blocking mode for the dial operations will allow us to start the
-	// workers before the coordinator.
-	socket.set_nonblocking(true);
-	urls.into_iter()
-		.map(|url| {
+		// Set NNG's queue to zero. We don't want this worker picking up work that it can't
+		// immediately do. The coordinator is managing our own queue.
+		socket.set_opt::<RecvBufferSize>(0).context("Unable to set receive buffer size")?;
+
+		// In order for the workers to be able to be started before the coordinator, they need
+		// to be put into nonblocking mode before trying to connect.
+		socket.set_nonblocking(true);
+
+		info!("Connecting to URLs");
+		for url in urls {
 			let url = url.as_ref();
-			info!("Dialing to {}", url);
-			socket.dial(url).context("Unable to dial to URL")
-		})
-		.collect::<Result<_, _>>()?;
 
-	// Now that we've dialed out, go back to blocking mode to make managing the work easier.
-	socket.set_nonblocking(false);
+			debug!("Connecting to {}", url);
+			socket.dial(url).context("Failed to dial to URL")?;
+		}
 
-	info!("Beginning work loop");
-	loop {
-		debug!("Waiting for work");
-		let work = socket.recv().context("Failed to receive work")?;
+		// Once connected, we really do want to be in blocking mode to make the logic easier.
+		socket.set_nonblocking(false);
 
-		debug!("Entering callback function");
-		let result = callback(&work).context("Callback function resulted in an error")?;
+		Ok(Worker { socket })
+	}
 
-		debug!("Reply with result");
-		socket.send(result[..].into())
-			.map_err(|(_, e)| e)
-			.context("Failed to send results")?;
+	/// Sets the maximum amount of time between reconnection attempts.
+	pub fn set_reconn_max_time(&self, d: Option<Duration>) -> Result<(), Error>
+	{
+		self.socket.set_opt::<ReconnectMaxTime>(d).context("Unable to set reconnect max time")
+	}
+
+	/// Sets the minimum amount of time between reconnection attempts.
+	pub fn set_reconn_min_time(&self, d: Option<Duration>) -> Result<(), Error>
+	{
+		self.socket.set_opt::<ReconnectMinTime>(d).context("Unable to set reconnect min time")
+	}
+
+	/// Begin waiting for work
+	///
+	/// The worker will execute the provided callback every time it receives work. The result of the
+	/// callback will be sent as a reply to the coordinator node.
+	pub fn run<C, E>(self, mut callback: C) -> Result<(), RunError<E>>
+	where
+		C: FnMut(Message) -> Result<Message, E>
+	{
+		info!("Beginning work loop");
+		loop {
+			debug!("Waiting for work");
+			let work = self.socket.recv().context("Failed to receive work")?;
+
+			debug!("Entering callback function");
+			let result = match callback(work) {
+				Ok(r) => r,
+				Err(e) => return Err(RunError::Callback(e)),
+			};
+
+			debug!("Replying with result");
+			self.socket.send(result).map_err(|(_, e)| e).context("Failed to send result")?;
+		}
+	}
+}
+
+/// An error that happened while running work.
+pub enum RunError<E>
+{
+	/// Banyan had an internal error.
+	Internal(Error),
+
+	/// The user provided function had an error.
+	Callback(E)
+}
+
+impl<E: fmt::Debug> fmt::Debug for RunError<E>
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+	{
+		match self {
+			RunError::Internal(e) => f.debug_tuple("RunError::Internal").field(e).finish(),
+			RunError::Callback(e) => f.debug_tuple("RunError::Callback").field(e).finish(),
+		}
+	}
+}
+
+impl<E> fmt::Display for RunError<E>
+{
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
+	{
+		write!(f, "An error occurred inside of work loop")
+	}
+}
+
+impl<E: error::Error + 'static> error::Error for RunError<E>
+{
+	fn source(&self) -> Option<&(dyn error::Error + 'static)>
+	{
+		match self {
+			RunError::Internal(e) => Some(e),
+			RunError::Callback(e) => Some(e)
+		}
+	}
+}
+
+#[doc(hidden)]
+impl<E> From<Error> for RunError<E>
+{
+	fn from(e: Error) -> RunError<E>
+	{
+		RunError::Internal(e)
 	}
 }
