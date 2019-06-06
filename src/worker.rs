@@ -27,15 +27,10 @@ pub struct Worker
 impl Worker
 {
 	/// Creates a new worker node.
-	///
-	/// The node will attempt to connect to and listen for work from the specified addresses.
-	pub fn new<I, S>(urls: I) -> Result<Self, Error>
-	where
-		I: IntoIterator<Item = S>,
-		S: AsRef<str>,
+	pub fn new() -> Result<Self, Error>
 	{
 		info!("Opening NNG REP0 socket");
-		let mut socket = Socket::new(Protocol::Rep0).context("Unable to open REP0 socket")?;
+		let socket = Socket::new(Protocol::Rep0).context("Unable to open REP0 socket")?;
 
 		// Utilize the TCP keepalive to try to help keep things sane when there are long gaps
 		// between work events.
@@ -45,22 +40,35 @@ impl Worker
 		// immediately do. The coordinator is managing our own queue.
 		socket.set_opt::<RecvBufferSize>(0).context("Unable to set receive buffer size")?;
 
-		// In order for the workers to be able to be started before the coordinator, they need
-		// to be put into nonblocking mode before trying to connect.
-		socket.set_nonblocking(true);
-
-		info!("Connecting to URLs");
-		for url in urls {
-			let url = url.as_ref();
-
-			debug!("Connecting to {}", url);
-			socket.dial(url).context("Failed to dial to URL")?;
-		}
-
-		// Once connected, we really do want to be in blocking mode to make the logic easier.
-		socket.set_nonblocking(false);
-
 		Ok(Worker { socket })
+	}
+
+	/// Dials to the specified URL to receive work.
+	///
+	/// If the `nonblocking` flag is set, then the dial attempt will happen asynchronously and a
+	/// failed attempt will be periodically retried.
+	pub fn dial(&mut self, url: &str, nonblocking: bool) -> Result<(), Error>
+	{
+		// This right here is a good argument to fix nng-rs#34 soon.
+		self.socket.set_nonblocking(nonblocking);
+		self.socket.dial(url).context("Failed to dial to URL")?;
+		self.socket.set_nonblocking(false);
+
+		Ok(())
+	}
+
+	/// Listens on the specified URL to receive work.
+	///
+	/// If the `nonblocking` flag is set, then the listen attempt will happen asynchronously and a
+	/// failed attempt will be periodically retried.
+	pub fn listen(&mut self, url: &str, nonblocking: bool) -> Result<(), Error>
+	{
+		// This right here is a good argument to fix nng-rs#34 soon.
+		self.socket.set_nonblocking(nonblocking);
+		self.socket.listen(url).context("Failed to listen to URL")?;
+		self.socket.set_nonblocking(false);
+
+		Ok(())
 	}
 
 	/// Sets the maximum amount of time between reconnection attempts.
@@ -78,7 +86,8 @@ impl Worker
 	/// Begin waiting for work
 	///
 	/// The worker will execute the provided callback every time it receives work. The result of the
-	/// callback will be sent as a reply to the coordinator node.
+	/// callback will be sent as a reply to the coordinator node. This function will only return on
+	/// an error.
 	pub fn run<C, E>(self, mut callback: C) -> Result<(), RunError<E>>
 	where
 		C: FnMut(Message) -> Result<Message, E>

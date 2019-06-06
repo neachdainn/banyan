@@ -1,6 +1,7 @@
 //! Error types and aliases.
 use std::{error, fmt};
 
+/// An error that happens while running a Coordinator or a Worker.
 #[derive(Debug)]
 pub struct Error
 {
