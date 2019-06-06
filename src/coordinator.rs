@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use failure::{bail, Error, Fail, format_err, ResultExt};
+use failure::{Error, Fail, format_err, ResultExt};
 use futures::Future;
 use futures::sync::oneshot;
 use log::{debug, error, info, trace, warn};
@@ -302,7 +302,7 @@ impl Backend
 /// Updates the backend with connect and disconnect events.
 fn pipe_event(tx: &mpsc::SyncSender<Command>, pipe: nng::Pipe, event: nng::PipeEvent)
 {
-	use nng::options::{Options, RemAddr};
+	use nng::options::RemAddr;
 
 	let rem_addr_str = pipe.get_opt::<RemAddr>()
 		.map(|a| format!("{:?}", a))
