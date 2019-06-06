@@ -2,13 +2,21 @@
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
-use failure::{bail, Error, Fail, format_err, ResultExt};
+use failure::{Error, Fail, format_err, ResultExt};
 use futures::Future;
 use futures::sync::oneshot;
 use log::{debug, error, info, trace, warn};
+use nng::options::{Options, protocol::reqrep::ResendTime, SendBufferSize};
 
-type Promise = oneshot::Sender<Result<Vec<u8>, Error>>;
+type Promise = oneshot::Sender<Result<nng::Message, Error>>;
+
+/// The number of workers to spawn per connection.
+const WORKERS_PER_CONNECTION: usize = 2;
+
+/// The size of the queue used for messages to the backend.
+const BACKEND_QUEUE_SIZE: usize = 100;
 
 /// The backend for a single coordinator.
 struct Backend
@@ -22,7 +30,7 @@ struct Backend
 	tx: mpsc::SyncSender<Command>,
 
 	/// The work that has not yet been assigned to a worker.
-	queue: VecDeque<(Vec<u8>, Promise)>,
+	queue: VecDeque<(nng::Message, Promise)>,
 
 	/// The workers whose ID is their index in the list.
 	workers: Vec<Worker>,
@@ -43,11 +51,21 @@ impl Backend
 		let mut socket = nng::Socket::new(nng::Protocol::Req0)
 			.context("Unable to open REQ socket")?;
 
+		// Keep NNG from forming its own queue. We are managing that in a way that makes sense to
+		// us.
+		socket.set_opt::<SendBufferSize>(0).context("Unable to set send buffer size")?;
+
+		// Experiments suggest that having this too low can bog down the whole system. It can be
+		// much larger, especially if we have confidence in our connections.
+		// FIXME: This should be exposed to the users.
+		socket.set_opt::<ResendTime>(Some(Duration::from_secs(180)))
+			.context("Unable to set resend time")?;
+
 		// Open up the channel used to receive commands. Since we have to use the sync channel, we
 		// need to pick a value that is reasonable. In other words, how fast do we think that the
 		// backend can handle incoming commands versus how quickly will they come. I suspect that
 		// the ratio is in favor of the backend, so we'll start small.
-		let (tx, rx) = mpsc::sync_channel(100);
+		let (tx, rx) = mpsc::sync_channel(BACKEND_QUEUE_SIZE);
 
 		// Now we need to set up the pipe notify functions that will inform us about the number of
 		// active connections. We do this before listening to any URLs in order to make sure that we
@@ -98,22 +116,19 @@ impl Backend
 		loop {
 			// If the channel is closed, we will never receive any state updates from anything. As
 			// such, we should just break out of the loop and die.
-			let cmd = match self.rx.recv() {
-				Ok(c) => c,
-				Err(_) => bail!("Communication channel shut down early"),
-			};
+			let cmd = self.rx.recv().context("Communication channel shut down early")?;
 
 			// If we have no running work, nothing in the queue, and we can't accept more work, just
 			// break out of the loop and die.
 			if !accept_more && running_work + self.queue.len() == 0 {
-				break Ok(());
+				return Ok(());
 			}
 
 			// Otherwise, process the command.
 			match cmd {
 				Command::Shutdown => accept_more = false,
-				Command::CtxCountInc => self.max_workers = self.max_workers.saturating_add(1),
-				Command::CtxCountDec => self.max_workers = self.max_workers.saturating_sub(1),
+				Command::CtxCountInc => self.max_workers = self.max_workers.saturating_add(WORKERS_PER_CONNECTION),
+				Command::CtxCountDec => self.max_workers = self.max_workers.saturating_sub(WORKERS_PER_CONNECTION),
 
 				Command::Queue(work, promise) => {
 					// We always want to pull the most recent bit of work, so we'll just put the
@@ -178,7 +193,7 @@ impl Backend
 
 			// Try to send the work. If something goes wrong, forward it to the consumer via the
 			// promise.
-			if let Err((_, e)) = worker.ctx.send(&worker.aio, work[..].into()) {
+			if let Err((_, e)) = worker.ctx.send(&worker.aio, work) {
 				let _ = promise.send(Err(e.into()));
 				false
 			} else {
@@ -266,9 +281,7 @@ impl Backend
 
 				// The receive operation went find.
 				(&State::Recv, Ok(_)) => {
-					let msg = aio.get_msg()
-						.map(|m| m[..].into())
-						.ok_or(format_err!("AIO had no message available"));
+					let msg = aio.get_msg().ok_or(format_err!("AIO had no message available"));
 					let _ = tx.send(Command::Complete(id, msg));
 
 					state = State::Send;
@@ -289,7 +302,7 @@ impl Backend
 /// Updates the backend with connect and disconnect events.
 fn pipe_event(tx: &mpsc::SyncSender<Command>, pipe: nng::Pipe, event: nng::PipeEvent)
 {
-	use nng::options::{Options, RemAddr};
+	use nng::options::RemAddr;
 
 	let rem_addr_str = pipe.get_opt::<RemAddr>()
 		.map(|a| format!("{:?}", a))
@@ -367,8 +380,11 @@ impl Coordinator
 	///
 	/// This function returns a future which can be polled or waited on to determine when the work
 	/// is complete and retrieve the result.
-	pub fn submit(&self, work: Vec<u8>) -> Response
+	pub fn submit<W>(&self, work: W) -> Response
+		where W: Into<nng::Message>
 	{
+		let work = work.into();
+
 		trace!("Creating new oneshot pair and queuing work");
 		let (sender, receiver) = oneshot::channel();
 
@@ -412,7 +428,7 @@ impl Drop for Coordinator
 /// The promise of a response from a Banyan worker node.
 pub struct Response
 {
-	inner: oneshot::Receiver<Result<Vec<u8>, Error>>,
+	inner: oneshot::Receiver<Result<nng::Message, Error>>,
 }
 
 impl Future for Response
@@ -425,7 +441,7 @@ impl Future for Response
 		use futures::Async;
 
 		match self.inner.poll() {
-			Ok(Async::Ready(Ok(r))) => Ok(Async::Ready(r)),
+			Ok(Async::Ready(Ok(r))) => Ok(Async::Ready(r.to_vec())),
 			Ok(Async::Ready(Err(e))) => Err(e.into()),
 			Ok(Async::NotReady) => Ok(Async::NotReady),
 			Err(_) => Err(nng::Error::from(nng::ErrorKind::Canceled).into())
@@ -470,8 +486,8 @@ enum Command
 	CtxCountDec,
 
 	/// Queue up a bit of work to do.
-	Queue(Vec<u8>, Promise),
+	Queue(nng::Message, Promise),
 
 	/// Mark a bit of work as done and the context as free.
-	Complete(usize, Result<Vec<u8>, Error>),
+	Complete(usize, Result<nng::Message, Error>),
 }

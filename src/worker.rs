@@ -5,7 +5,13 @@ use failure::{Error, ResultExt};
 use nng::{
 	Protocol,
 	Socket,
-	options::{Options, ReconnectMaxTime, ReconnectMinTime, transport::tcp::KeepAlive}
+	options::{
+		Options,
+		ReconnectMaxTime,
+		ReconnectMinTime,
+		RecvBufferSize,
+		transport::tcp::KeepAlive
+	}
 };
 use log::{info, debug};
 
@@ -36,6 +42,11 @@ pub fn start<U, S, C>(urls: U, mut callback: C) -> Result<(), Error>
 		.context("Failed to set reconnect min time")?;
 	socket.set_opt::<ReconnectMaxTime>(Some(Duration::from_secs(30)))
 		.context("Failed to set reconnect max time")?;
+
+	// And hopefully prevent workers from queuing up work to do later. We really want to be able to
+	// have all workers actively running and taking more than a single bit of work causes issues
+	// when some workers are slower than others.
+	socket.set_opt::<RecvBufferSize>(0).context("Unable to set receive buffer size")?;
 
 	// Setting the socket to non-blocking mode for the dial operations will allow us to start the
 	// workers before the coordinator.
