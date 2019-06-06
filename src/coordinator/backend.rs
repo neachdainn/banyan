@@ -107,7 +107,8 @@ impl Backend
 					Some(v) => v,
 					None => {
 						warn!("Received unexpected completion event from worker (ID {})", id);
-						0
+						// Return because an idle worker isn't as bad as a faulty one.
+						return Ok(());
 					},
 				};
 

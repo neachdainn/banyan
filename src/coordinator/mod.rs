@@ -130,8 +130,10 @@ impl Coordinator
 	///
 	/// This function returns a future which can be polled or waited on to determine when the work
 	/// is complete and retrieve the result.
-	pub fn submit(&self, work: Message) -> Response
+	pub fn submit<M: Into<Message>>(&self, work: M) -> Response
 	{
+		let work = work.into();
+
 		let (sender, receiver) = oneshot::channel();
 
 		// If we fail to send the command to the backend, then the sender will be dropped. This
