@@ -21,8 +21,7 @@ gitlab = { repository = "neachdainn/banyan", branch = "master" }
 [dependencies]
 crossbeam-channel = "0.3.8"
 parking_lot = "0.8.0"
-#nng = "0.5.0-rc.3"
-nng = { git = "https://gitlab.com/neachdainn/nng-rs.git", branch = "34-try"  }
+nng = "0.5.0"
 log = "0.4"
 futures = "0.1.25"
 
