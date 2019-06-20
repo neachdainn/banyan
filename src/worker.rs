@@ -45,30 +45,35 @@ impl Worker
 
 	/// Dials to the specified URL to receive work.
 	///
-	/// If the `nonblocking` flag is set, then the dial attempt will happen
-	/// asynchronously and a failed attempt will be periodically retried.
-	pub fn dial(&mut self, url: &str, nonblocking: bool) -> Result<(), Error>
+	/// If the dial succeeds and the resulting connection is ever lost, the
+	/// worker will periodically re-attempt the dial.
+	pub fn dial(&self, url: &str) -> Result<(), Error>
 	{
-		// This right here is a good argument to fix nng-rs#34 soon.
-		self.socket.set_nonblocking(nonblocking);
-		self.socket.dial(url).context("Failed to dial to URL")?;
-		self.socket.set_nonblocking(false);
-
-		Ok(())
+		self.socket.dial(url).context("Failed to dial to URL")
 	}
 
 	/// Listens on the specified URL to receive work.
-	///
-	/// If the `nonblocking` flag is set, then the listen attempt will happen
-	/// asynchronously and a failed attempt will be periodically retried.
-	pub fn listen(&mut self, url: &str, nonblocking: bool) -> Result<(), Error>
+	pub fn listen(&self, url: &str) -> Result<(), Error>
 	{
-		// This right here is a good argument to fix nng-rs#34 soon.
-		self.socket.set_nonblocking(nonblocking);
-		self.socket.listen(url).context("Failed to listen to URL")?;
-		self.socket.set_nonblocking(false);
+		self.socket.listen(url).context("Failed to listen to URL")
+	}
 
-		Ok(())
+	/// Asynchronously dials to the specified URL to receive work.
+	///
+	/// If the connection attempt fails or a connection is later disconnected,
+	/// the worker will periodically re-attempt the dial.
+	pub fn dial_async(&self, url: &str) -> Result<(), Error>
+	{
+		self.socket.dial_async(url).context("Failed to dial to URL")
+	}
+
+	/// Asynchronously listens on the specified URL to receive work.
+	///
+	/// If the worker fails to bind to the URL it will periodically re-attempt
+	/// the bind operation.
+	pub fn listen_async(&self, url: &str) -> Result<(), Error>
+	{
+		self.socket.listen_async(url).context("Failed to listen to URL")
 	}
 
 	/// Sets the maximum amount of time between reconnection attempts.
@@ -140,10 +145,7 @@ impl<E> fmt::Display for RunError<E>
 
 impl<E: error::Error + 'static> error::Error for RunError<E>
 {
-	fn description(&self) -> &str
-	{
-		"An error occurred inside of the work loop"
-	}
+	fn description(&self) -> &str { "An error occurred inside of the work loop" }
 
 	fn source(&self) -> Option<&(dyn error::Error + 'static)>
 	{

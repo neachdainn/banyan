@@ -108,13 +108,13 @@ impl Backend
 				}
 
 				// Then, warn if we weren't expecting any work to be completed.
-				self.running_work = match self.running_work.checked_sub(1) {
-					Some(v) => v,
-					None => {
-						warn!("Received unexpected completion event from worker (ID {})", id);
-						// Return because an idle worker isn't as bad as a faulty one.
-						return Ok(());
-					},
+				self.running_work = if let Some(v) = self.running_work.checked_sub(1) {
+					v
+				}
+				else {
+					warn!("Received unexpected completion event from worker (ID {})", id);
+					// Return because an idle worker isn't as bad as a faulty one.
+					return Ok(());
 				};
 
 				// Finally, add the ID to the queue of available workers.
@@ -159,11 +159,7 @@ impl Backend
 		// allocate if necessary. We do this before confirming that there isn't any
 		// active work because it is easy to add the worker back to a list where order
 		// doesn't matter than it is to reinsert the work into the front of a queue.
-		let id = self
-			.available_workers
-			.pop()
-			.map(|id| Ok(id))
-			.unwrap_or_else(|| self.allocate_worker())?;
+		let id = self.available_workers.pop().map_or_else(|| self.allocate_worker(), Ok)?;
 
 		// At this point, try to get any bit of work that isn't cancelled.
 		let (work, promise) = if let Some((w, p)) = self.pop_work() {
@@ -207,15 +203,15 @@ impl Backend
 		// 2. Something being `Sync` logically means that it is also `RefUnwindSafe`
 		//    but, due to backwards compatibility reasons, it is not necessarily
 		//    implemented as such.
-		// 3. Given the previous point, it should be perfectly valid to `AssertUnwindSafe`
-		//    on any type that is `Sync`.
+		// 3. Given the previous point, it should be perfectly valid to
+		// `AssertUnwindSafe`    on any type that is `Sync`.
 		//
 		// Eventually this should happen in Nng-rs, but I want a working version of this
 		// before I release yet another RC for v0.5.0.
 		let cb = AssertUnwindSafe(move |aio, res| worker_clone.callback(aio, res));
 
-		let aio = Aio::new(move |aio, res| (*cb)(aio, res))
-			.context("Unable to create AIO object")?;
+		let aio =
+			Aio::new(move |aio, res| (*cb)(aio, res)).context("Unable to create AIO object")?;
 
 		self.workers.push((worker, aio));
 		Ok(id)

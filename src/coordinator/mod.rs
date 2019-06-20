@@ -33,6 +33,7 @@ const HANDLER_RATIO: usize = 1;
 /// futures from being fulfilled. If one wishes to wait until all futures are
 /// fulfilled, either wait on the futures themselves or use the
 /// `Coordinator::shutdown` function.
+#[derive(Debug)]
 pub struct Coordinator
 {
 	/// The underlying NNG socket.
@@ -93,30 +94,35 @@ impl Coordinator
 
 	/// Dials to the specified URL to distribute work.
 	///
-	/// If the `nonblocking` flag is set, then the dial attempt will happen
-	/// asynchronously and a failed attempt will be periodically retried.
-	pub fn dial(&mut self, url: &str, nonblocking: bool) -> Result<(), Error>
+	/// If the dial succeeds and the resulting connection is ever lost, the
+	/// coordinator will periodically re-attempt the dial.
+	pub fn dial(&self, url: &str) -> Result<(), Error>
 	{
-		// This right here is a good argument to fix nng-rs#34 soon.
-		self.socket.set_nonblocking(nonblocking);
-		self.socket.dial(url).context("Failed to dial to URL")?;
-		self.socket.set_nonblocking(false);
-
-		Ok(())
+		self.socket.dial(url).context("Failed to dial to URL")
 	}
 
 	/// Listens on the specified URL to distribute work.
-	///
-	/// If the `nonblocking` flag is set, then the listen attempt will happen
-	/// asynchronously and a failed attempt will be periodically retried.
-	pub fn listen(&mut self, url: &str, nonblocking: bool) -> Result<(), Error>
+	pub fn listen(&self, url: &str) -> Result<(), Error>
 	{
-		// This right here is a good argument to fix nng-rs#34 soon.
-		self.socket.set_nonblocking(nonblocking);
-		self.socket.listen(url).context("Failed to listen to URL")?;
-		self.socket.set_nonblocking(false);
+		self.socket.listen(url).context("Failed to listen to URL")
+	}
 
-		Ok(())
+	/// Asynchronously dials to the specified URL to distribute work.
+	///
+	/// If the connection attempt fails or a connection is later disconnected,
+	/// the coordinator will periodically re-attempt the dial.
+	pub fn dial_async(&self, url: &str) -> Result<(), Error>
+	{
+		self.socket.dial_async(url).context("Failed to dial to URL")
+	}
+
+	/// Asynchronously listens on the specified URL to distribute work.
+	///
+	/// If the coordinator fails to bind to the URL it will periodically
+	/// re-attempt the bind operation.
+	pub fn listen_async(&self, url: &str) -> Result<(), Error>
+	{
+		self.socket.listen_async(url).context("Failed to listen to URL")
 	}
 
 	/// Sets the maximum amount of time between reconnection attempts.
@@ -197,6 +203,7 @@ enum Command
 }
 
 /// The promise of a response from a Banyan worker node.
+#[derive(Debug)]
 pub struct Response
 {
 	inner: oneshot::Receiver<Result<Message, Error>>,

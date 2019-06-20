@@ -41,17 +41,15 @@ impl Worker
 	pub fn callback(&self, aio: Aio, res: AioResult)
 	{
 		match res {
-			AioResult::SendOk => {
+			AioResult::Send(Ok(..)) => {
 				if let Err(e) = self.ctx.recv(&aio) {
 					self.report(Err(e).context("Unable to begin receive operation"));
 				}
 			},
-			AioResult::SendErr(_, e) => self.report(Err(e).context("Failed to send message")),
+			AioResult::Send(Err((_, e))) => self.report(Err(e).context("Failed to send message")),
 
-			AioResult::RecvOk(m) => self.report(Ok(m)),
-			AioResult::RecvErr(e) => self.report(Err(e).context("Failed to receive message")),
-
-			AioResult::SleepOk | AioResult::SleepErr(_) => unreachable!("Worker never sleeps"),
+			AioResult::Recv(r) => self.report(r.context("Failed to receive message")),
+			AioResult::Sleep(..) => unreachable!("Worker never sleeps"),
 		}
 	}
 

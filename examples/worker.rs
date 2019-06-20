@@ -10,8 +10,8 @@ use log::{error, info};
 
 fn run(name: &str) -> Result<(), RunError<Utf8Error>> {
     info!("Worker \"{}\" starting", name);
-    let mut worker = Worker::new()?;
-    worker.dial("tcp://127.0.0.1:5555", true)?;
+    let worker = Worker::new()?;
+    worker.dial_async("tcp://127.0.0.1:5555")?;
 
     worker.run(|mut work| {
         let msg = str::from_utf8(&work)?.to_string();
@@ -41,5 +41,6 @@ fn main() {
         if let Some(c) = e.source() {
             error!("Caused by: {}", c);
         }
+        std::process::exit(1);
     }
 }

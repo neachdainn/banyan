@@ -1,4 +1,0 @@
-= Banyan: A Task Distribution Library
-
-Banyan makes it easy to distribute long-running tasks across multiple processes, machines, or threads.
-It takes advantage of https://nanomsg.github.io/nng/[nng] to provide reliable connections between coordinator and worker nodes.
