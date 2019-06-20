@@ -6,23 +6,17 @@ use std::{error, fmt};
 pub struct Error
 {
 	context: &'static str,
-	cause: nng::Error,
+	cause:   nng::Error,
 }
 
 impl error::Error for Error
 {
-	fn source(&self) -> Option<&(dyn error::Error + 'static)>
-	{
-		Some(&self.cause)
-	}
+	fn source(&self) -> Option<&(dyn error::Error + 'static)> { Some(&self.cause) }
 }
 
 impl fmt::Display for Error
 {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result
-	{
-		write!(f, "{}", self.context)
-	}
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.context) }
 }
 
 pub trait ResultExt<A>

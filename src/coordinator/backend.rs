@@ -1,16 +1,18 @@
 use std::{collections::VecDeque, panic::AssertUnwindSafe, sync::Arc};
 
+use super::{worker::Worker, Command, Promise, HANDLER_RATIO};
 use crate::error::{Error, ResultExt};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use log::{debug, info, warn};
 use nng::{Aio, Context, Message, Socket};
-use super::{Command, HANDLER_RATIO, Promise, worker::Worker};
 
 /// Coordinator backend.
 ///
-/// This object manages the distribution of messages across available worker nodes.
-// This is a struct rather than just a function in order to make it easier to modify it to run an
-// update step from multiple threads if we ever need to make that modification.
+/// This object manages the distribution of messages across available worker
+/// nodes.
+// This is a struct rather than just a function in order to make it easier to
+// modify it to run an update step from multiple threads if we ever need to make
+// that modification.
 pub struct Backend
 {
 	/// The underlying NNG socket.
@@ -44,7 +46,7 @@ pub struct Backend
 impl Backend
 {
 	/// Creates a new Backend.
-	pub(in super) fn new(socket: Socket) -> (Backend, Sender<Command>)
+	pub(super) fn new(socket: Socket) -> (Backend, Sender<Command>)
 	{
 		let (tx, rx) = crossbeam_channel::unbounded();
 
@@ -63,12 +65,11 @@ impl Backend
 		(backend, tx)
 	}
 
-
 	/// Run the backend event loop.
 	pub fn run(mut self) -> Result<(), Error>
 	{
-		// Only run as long as we are accepting more work, have work currently running, or have
-		// work queued up.
+		// Only run as long as we are accepting more work, have work currently running,
+		// or have work queued up.
 		info!("Beginning event loop");
 		while !self.shutting_down || !self.pending_work.is_empty() || self.running_work > 0 {
 			self.event_loop(false)?;
@@ -86,8 +87,12 @@ impl Backend
 		// Process the incoming event.
 		match cmd {
 			Command::Shutdown => self.shutting_down = true,
-			Command::CtxCountInc => self.max_running_work = self.max_running_work.saturating_add(HANDLER_RATIO),
-			Command::CtxCountDec => self.max_running_work = self.max_running_work.saturating_sub(HANDLER_RATIO),
+			Command::CtxCountInc => {
+				self.max_running_work = self.max_running_work.saturating_add(HANDLER_RATIO)
+			},
+			Command::CtxCountDec => {
+				self.max_running_work = self.max_running_work.saturating_sub(HANDLER_RATIO)
+			},
 
 			Command::Queue(m, p) => {
 				if !self.shutting_down {
@@ -114,20 +119,20 @@ impl Backend
 
 				// Finally, add the ID to the queue of available workers.
 				self.available_workers.push(id);
-			}
+			},
 		}
 
-		// Most commands received will either make a worker available or add a new bit of work to
-		// the queue. Additionally, these can only happen in increments of one, so we only need to
-		// try and distribute one bit of work.
+		// Most commands received will either make a worker available or add a new bit
+		// of work to the queue. Additionally, these can only happen in increments of
+		// one, so we only need to try and distribute one bit of work.
 		self.try_distribute_one()
 	}
 
 	/// Receives on the command channel, blocking if specified.
 	fn recv(&self, nonblocking: bool) -> Option<Command>
 	{
-		// The channel should never be closed since the workers never drop their sending half
-		// and the workers don't get dropped until the backend does.
+		// The channel should never be closed since the workers never drop their sending
+		// half and the workers don't get dropped until the backend does.
 		if nonblocking {
 			match self.rx.try_recv() {
 				Ok(c) => Some(c),
@@ -144,23 +149,30 @@ impl Backend
 	/// Try to distribute a bit of work.
 	fn try_distribute_one(&mut self) -> Result<(), Error>
 	{
-		// Make sure that it is valid for us to have another running worker and that we actually
-		// have work to distribute.
+		// Make sure that it is valid for us to have another running worker and that we
+		// actually have work to distribute.
 		if self.running_work >= self.max_running_work || self.pending_work.is_empty() {
 			return Ok(());
 		}
 
-		// Now, find any available worker. Prefer ones that are already allocated but allocate if
-		// necessary. We do this before confirming that there isn't any active work because it is
-		// easy to add the worker back to a list where order doesn't matter than it is to reinsert
-		// the work into the front of a queue.
-		let id = self.available_workers.pop()
+		// Now, find any available worker. Prefer ones that are already allocated but
+		// allocate if necessary. We do this before confirming that there isn't any
+		// active work because it is easy to add the worker back to a list where order
+		// doesn't matter than it is to reinsert the work into the front of a queue.
+		let id = self
+			.available_workers
+			.pop()
 			.map(|id| Ok(id))
 			.unwrap_or_else(|| self.allocate_worker())?;
 
 		// At this point, try to get any bit of work that isn't cancelled.
-		let (work, promise) = if let Some((w, p)) = self.pop_work() { (w, p) }
-			else { self.available_workers.push(id); return Ok(()) };
+		let (work, promise) = if let Some((w, p)) = self.pop_work() {
+			(w, p)
+		}
+		else {
+			self.available_workers.push(id);
+			return Ok(());
+		};
 
 		// Assign the worker and start the AIO operation.
 		let (worker, aio) = &self.workers[id];
@@ -185,20 +197,21 @@ impl Backend
 		let worker = Arc::new(Worker::new(tx, ctx, id));
 		let worker_clone = Arc::clone(&worker);
 
-		// The current `catch_unwind` interface is a right pain in the butt. After much discussion
-		// on the Rust IRC channels and repeatedly hitting my head into walls, I think I've arrived
-		// at the following conclusions:
+		// The current `catch_unwind` interface is a right pain in the butt. After much
+		// discussion on the Rust IRC channels and repeatedly hitting my head into
+		// walls, I think I've arrived at the following conclusions:
 		//
-		// 1. This pain is partially because {Ref}UnwindSafe wasn't in Rustc 1.0 and partially
-		//    because people are overzealous about making it a pain to avoid being a general catch
-		//    mechanism.
-		// 2. Something being `Sync` logically means that it is also `RefUnwindSafe` but, due to
-		//    backwards compatibility reasons, it is not necessarily implemented as such.
-		// 3. Given the previous point, it should be perfectly valid to `AssertUnwindSafe` on any
-		//    type that is `Sync`.
+		// 1. This pain is partially because {Ref}UnwindSafe wasn't in Rustc 1.0 and
+		//    partially because people are overzealous about making it a pain to avoid
+		//    being a general catch mechanism.
+		// 2. Something being `Sync` logically means that it is also `RefUnwindSafe`
+		//    but, due to backwards compatibility reasons, it is not necessarily
+		//    implemented as such.
+		// 3. Given the previous point, it should be perfectly valid to `AssertUnwindSafe`
+		//    on any type that is `Sync`.
 		//
-		// Eventually this should happen in Nng-rs, but I want a working version of this before I
-		// release yet another RC for v0.5.0.
+		// Eventually this should happen in Nng-rs, but I want a working version of this
+		// before I release yet another RC for v0.5.0.
 		let cb = AssertUnwindSafe(move |aio, res| worker_clone.callback(aio, res));
 
 		let aio = Aio::new(move |aio, res| (*cb)(aio, res))
