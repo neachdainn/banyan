@@ -211,8 +211,7 @@ impl Backend
 		let cb = AssertUnwindSafe(move |aio, res| worker_clone.callback(aio, res));
 
 		#[allow(clippy::redundant_closure)]
-		let aio =
-			Aio::new(move |aio, res| (*cb)(aio, res)).context("Unable to create AIO object")?;
+		let aio = Aio::new(move |aio, res| (*cb)(aio, res)).context("Unable to create AIO object")?;
 
 		self.workers.push((worker, aio));
 		Ok(id)
