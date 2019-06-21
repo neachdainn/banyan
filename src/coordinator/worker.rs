@@ -51,6 +51,9 @@ impl Worker
 			AioResult::Recv(r) => self.report(r.context("Failed to receive message")),
 			AioResult::Sleep(..) => unreachable!("Worker never sleeps"),
 		}
+
+		// Appease the mighty clippy
+		std::mem::drop(aio);
 	}
 
 	/// Attempts to send the result back through the promise.
