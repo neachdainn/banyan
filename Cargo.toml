@@ -19,14 +19,11 @@ publish = false
 gitlab = { repository = "neachdainn/banyan", branch = "master" }
 
 [dependencies]
-crossbeam-channel = "0.3.8"
-parking_lot = "0.8.0"
-nng = "0.5.0"
-log = "0.4"
-futures = "0.1.25"
+crossbeam-channel = "0.4.0"
+parking_lot = "0.10.0"
+nng = "1.0.0-rc.2"
+log = "0.4.8"
+futures = "0.3.4"
 
 [dev-dependencies]
-env_logger = "0.5"
-
-[patch.crates-io]
-"nng-sys" = { git = "https://github.com/jeikabu/nng-rust.git", branch = "tracking" }
+env_logger = "0.7.1"
