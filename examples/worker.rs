@@ -17,7 +17,7 @@ fn run(name: &str) -> Result<(), RunError<Utf8Error>> {
         let msg = str::from_utf8(&work)?.to_string();
         info!("Received work: {}", msg);
 
-        thread::sleep(time::Duration::from_secs(1));
+        thread::sleep(time::Duration::from_secs(3));
         work.clear();
         write!(work, "{} - {}", msg.to_uppercase(), name).unwrap(); // Write to memory can't fail
 
