@@ -12,6 +12,7 @@ pub struct Error
 impl error::Error for Error
 {
 	fn description(&self) -> &str { self.context }
+
 	fn source(&self) -> Option<&(dyn error::Error + 'static)> { Some(&self.cause) }
 }
 

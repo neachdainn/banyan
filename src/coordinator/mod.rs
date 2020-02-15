@@ -214,7 +214,9 @@ impl Future for Response
 	{
 		match Pin::new(&mut self.get_mut().inner).poll(cx) {
 			Poll::Ready(Ok(r)) => Poll::Ready(r),
-			Poll::Ready(Err(_)) => Poll::Ready(Err(nng::Error::Canceled).context("Work task canceled")),
+			Poll::Ready(Err(_)) => {
+				Poll::Ready(Err(nng::Error::Canceled).context("Work task canceled"))
+			},
 			Poll::Pending => Poll::Pending,
 		}
 	}

@@ -16,6 +16,7 @@
 #![warn(clippy::use_debug)]
 #![allow(clippy::use_self)]
 #![allow(clippy::replace_consts)]
+#![allow(clippy::missing_errors_doc)] // 100% of them are just NNG errors
 
 pub mod coordinator;
 
