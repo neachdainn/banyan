@@ -45,19 +45,6 @@ clippy:
     - master
     - merge_requests
 
-# Test the project against the minimum Rust version to make sure we don't raise it
-minimum-rust-version:
-  image: "rust:1.32-slim"
-  stage: test
-  script:
-    - rustc --version
-    - cargo --version
-    - cargo test --all --all-features --verbose
-  only:
-    - tags
-    - master
-    - merge_requests
-
 # Check against the current stable for regressions
 stable:
   stage: test
