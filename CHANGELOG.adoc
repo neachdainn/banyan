@@ -21,3 +21,13 @@ The format is based on https://keepachangelog.com/en/1.0.0/[Keep a Changelog] an
 //------------------------------------------------------------------------------
 // Past Releases
 //------------------------------------------------------------------------------
+
+== [banyan v0.2.1] 2020-02-15 ==
+
+=== Changed ===
+
+* Updated dependencies to latest versions.
+
+=== Fixed ===
+
+* No longer need to used a patched version of the `nng-sys` crate.

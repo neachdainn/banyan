@@ -1,6 +1,6 @@
 [package]
 name = "banyan"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Nathan Kent <nate@nkent.net>"]
 
 description = "A task distribution library utilizing NNG"
