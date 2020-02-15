@@ -67,15 +67,6 @@ impl Worker
 		self.socket.dial_async(url).context("Failed to dial to URL")
 	}
 
-	/// Asynchronously listens on the specified URL to receive work.
-	///
-	/// If the worker fails to bind to the URL it will periodically re-attempt
-	/// the bind operation.
-	pub fn listen_async(&self, url: &str) -> Result<(), Error>
-	{
-		self.socket.listen_async(url).context("Failed to listen to URL")
-	}
-
 	/// Sets the maximum amount of time between reconnection attempts.
 	pub fn set_reconn_max_time(&self, d: Option<Duration>) -> Result<(), Error>
 	{

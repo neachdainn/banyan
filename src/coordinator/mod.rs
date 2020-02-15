@@ -1,9 +1,15 @@
 //! Coordinator nodes and utilities.
-use std::{thread::JoinHandle, time::Duration};
+use std::{
+	future::Future,
+	pin::Pin,
+	task::{Context, Poll},
+	thread::JoinHandle,
+	time::Duration,
+};
 
 use crate::error::{Error, ResultExt};
 use crossbeam_channel::Sender;
-use futures::{sync::oneshot, Future};
+use futures::channel::oneshot;
 use log::{error, info};
 use nng::{
 	options::{
@@ -116,15 +122,6 @@ impl Coordinator
 		self.socket.dial_async(url).context("Failed to dial to URL")
 	}
 
-	/// Asynchronously listens on the specified URL to distribute work.
-	///
-	/// If the coordinator fails to bind to the URL it will periodically
-	/// re-attempt the bind operation.
-	pub fn listen_async(&self, url: &str) -> Result<(), Error>
-	{
-		self.socket.listen_async(url).context("Failed to listen to URL")
-	}
-
 	/// Sets the maximum amount of time between reconnection attempts.
 	pub fn set_reconn_max_time(&self, d: Option<Duration>) -> Result<(), Error>
 	{
@@ -211,18 +208,14 @@ pub struct Response
 
 impl Future for Response
 {
-	type Error = Error;
-	type Item = Message;
+	type Output = Result<Message, Error>;
 
-	fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error>
+	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
 	{
-		use futures::Async;
-
-		match self.inner.poll() {
-			Ok(Async::Ready(Ok(r))) => Ok(Async::Ready(r)),
-			Ok(Async::Ready(Err(e))) => Err(e),
-			Ok(Async::NotReady) => Ok(Async::NotReady),
-			Err(_) => Err(nng::Error::Canceled).context("Work task was canceled"),
+		match Pin::new(&mut self.get_mut().inner).poll(cx) {
+			Poll::Ready(Ok(r)) => Poll::Ready(r),
+			Poll::Ready(Err(_)) => Poll::Ready(Err(nng::Error::Canceled).context("Work task canceled")),
+			Poll::Pending => Poll::Pending,
 		}
 	}
 }
