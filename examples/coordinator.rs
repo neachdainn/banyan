@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use banyan::coordinator::Coordinator;
-use futures::Future;
+use futures::{executor::block_on_stream, stream::FuturesUnordered};
 use log::{error, info};
 
 fn run() -> Result<(), banyan::Error> {
@@ -39,26 +39,24 @@ fn run() -> Result<(), banyan::Error> {
     let res0 = data0
         .into_iter()
         .map(|s| c.submit(s.as_bytes()))
-        .collect::<Vec<_>>();
+        .collect::<FuturesUnordered<_>>();
 
     info!("Batch submitted");
-    for future in res0 {
-        let resp = future.wait()?;
-        let resp = String::from_utf8_lossy(&resp);
-        println!("{}", resp);
+    for resp in block_on_stream(res0) {
+        let resp = resp?;
+        println!("{}", String::from_utf8_lossy(&resp));
     }
 
     info!("Starting second batch");
     let res1 = data1
         .into_iter()
         .map(|s| c.submit(s.as_bytes()))
-        .collect::<Vec<_>>();
+        .collect::<FuturesUnordered<_>>();
 
     info!("Batch submitted");
-    for future in res1 {
-        let resp = future.wait()?;
-        let resp = String::from_utf8_lossy(&resp);
-        println!("{}", resp);
+    for resp in block_on_stream(res1) {
+        let resp = resp?;
+        println!("{}", String::from_utf8_lossy(&resp));
     }
 
     Ok(())
